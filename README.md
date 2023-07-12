@@ -34,3 +34,9 @@
 # C++23 draft
 
 [c++23 draft](https://github.com/timsong-cpp/cppwp)
+
+# views
+
+[Making Your Own Container Compatible With C++20 Ranges](https://www.reedbeta.com/blog/ranges-compatible-containers/)
+
+[A custom C++20 range view](https://mariusbancila.ro/blog/2020/06/06/a-custom-cpp20-range-view/)
