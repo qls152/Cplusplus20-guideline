@@ -165,7 +165,111 @@ auto co = hello(3);
 
 ## promise_type
 
-promise_type可以用来控制协程的行为。
+promise_type可以用来控制协程的行为。详细来说，promise_type给开发者提供了如下能力
+
+- 与coroutine交互(从coroutine接受消息，以及将消息发送给coroutine)
+
+- 创建coroutine handle
+
+- 控制coroutine的suspend时机（在coroutine的入口和结尾）
+
+- 提供了异常处理
+
+一个promise_type有如下接口
+
+```c++
+struct promise_type
+{
+    coroutine get_return_object() { return {coroutine::from_promise(*this)}; }
+    std::suspend_always initial_suspend() noexcept { return {}; }
+    std::suspend_always final_suspend() noexcept { return {}; }
+    void return_void() {}
+    void unhandled_exception() {}
+    auto yeid_value(val);
+    auto return_value(val);
+    auto await_transform(...);
+    operator new(sz);
+    operator delete(ptr, sz);
+    auto get_return_object_on_allocation_failure();
+};
+```
+
+一个类(模版类)只要实现了promise type所需要的接口，那么该类便可以用作协程的promise_type。一个简单的模版promise_type类如下
+
+```c++
+#include <coroutine>
+#include <exception>
+
+template <typename Type>
+struct CoroPromise {
+  auto get_return_object() {
+      return std::coroutine_handle<CoroPromise<Type>>::from_promise(*this);
+  }
+
+  auto initial_suspend() { return std::suspend_always{}; }
+
+  void unhandled_exception() { std::terminate(); }
+
+  void return_void() {}
+
+  auto final_suspend() noexcept { return std::suspend_always{}; }
+};
+```
+上述接口说明如下
+
+*get_return_object():* 主要用来初始化协程接口，用来作为协程的返回值。 该函数一般做两件事情
+
+- 创建coroutine handle. 通过std::coroutine_handle的静态成员函数from_promise创建和初始化
+
+- 利用创建的coroutine handle初始化协程接口
+
+*initial_suspend():* 定制coroutine启动时的行为。  eagerly 或者 lazily。
+
+-  当返回值为std::suspend_never{}，coroutine 立马执行(eagerly)
+
+-  当返回值为std::suspend_always{}，coroutine 立马暂停(suspending, lazily)
+
+*return_void():* 定制coroutine到达结尾或者碰到co_return 语句时的行为。当promise_type声明并定义了该成员函数，那么coroutine必须不能返回任何值。
+
+*unhandled_exception():* 定制coroutine处理异常的方式。可以重新抛出异常也可以直接调用std::terminate()
+
+*final_suspend():* 定制coroutine是否被最终suspend。这个函数需要保证不能抛出异常，且应该总是返回std::suspend_always{}
+
+## coroutine_handle
+
+coroutine_handle表示一个正在执行或者暂停(suspend)的coroutine。在C++20中，coroutine_handle由标准模版
+
+std::coroutine_handle<>表示。 std::coroutine_handle的模版参数为promise_type的类型。
+
+目前C++20针对std::coroutine_handle提供了三种版本，分别为
+
+- 
+```c++
+template <>
+struct std::coroutine_handle<void>;
+``` 
+
+- 
+   ```c++
+     template <typename Promise = void>
+     struct std::coroutine_handle;
+  ```
+
+- 
+   ```c++
+   template<>
+   struct coroutine_handle<std::noop_coroutine_promise>;
+   ```
+
+struct std::coroutine_handle<void>; 可以存储任何种类的协程
+
+struct std::coroutine_handle; 存储由Promise制定的协程
+
+struct coroutine_handle<std::noop_coroutine_promise>; 存储一个no-op的协程。
+
+
+
+
 
 
 

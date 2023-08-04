@@ -7,3 +7,5 @@
 [Stackless vs. Stackful Coroutines](https://blog.varunramesh.net/posts/stackless-vs-stackful-coroutines/)
 
 [c++20 coroutine impl](https://github.com/lewissbaker/lewissbaker.github.io/issues)
+
+[std::coroutine_traits](https://en.cppreference.com/w/cpp/coroutine/coroutine_traits)
