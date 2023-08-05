@@ -267,8 +267,231 @@ struct std::coroutine_handle; 存储由Promise制定的协程
 
 struct coroutine_handle<std::noop_coroutine_promise>; 存储一个no-op的协程。
 
+当你调用一个coroutine时，编译器会为你创建一个coroutine frame。该coroutine frame中会存放coroutine相应的状态。 为了恢复coroutine的执行或者销毁coroutine frame，你需要一个coroutine handle，其用来定位相应的coroutine frame。
 
+C++20中的上述三个coroutine_handle的接口声明如下
+```c++
 
+template <> 
+struct coroutine_handle<void> {
+    public:
+      // [coroutine.handle.con], construct/reset
+      constexpr coroutine_handle() noexcept;
+
+      constexpr coroutine_handle(std::nullptr_t __h) noexcept;
+
+      coroutine_handle& operator=(std::nullptr_t) noexcept;
+
+    public:
+      // [coroutine.handle.export.import], export/import
+      constexpr void* address() const noexcept;
+
+      constexpr static coroutine_handle from_address(void* __a) noexcept;
+
+      // [coroutine.handle.observers], observers
+      constexpr explicit operator bool() const noexcept;
+      bool done() const noexcept;
+
+      // [coroutine.handle.resumption], resumption
+      void operator()() const;
+
+      void resume() const;
+
+      void destroy() const;
+  };
+
+  template <typename _Promise>
+  struct coroutine_handle {
+      // [coroutine.handle.con], construct/reset
+      constexpr coroutine_handle() noexcept;
+
+      constexpr coroutine_handle(nullptr_t) noexcept;
+
+      static coroutine_handle from_promise(_Promise& __p);
+
+      coroutine_handle& operator=(nullptr_t) noexcept;
+
+      // [coroutine.handle.export.import], export/import
+
+      constexpr void* address() const noexcept;
+
+      constexpr static coroutine_handle from_address(void* __a) noexcept;
+
+      // [coroutine.handle.conv], conversion
+      constexpr operator coroutine_handle<>() const noexcept;
+      // [coroutine.handle.observers], observers
+      constexpr explicit operator bool() const noexcept;
+
+      bool done() const noexcept;
+
+      // [coroutine.handle.resumption], resumption
+      void operator()() const;
+
+      void resume() const;
+
+      void destroy() const;
+
+      // [coroutine.handle.promise], promise access
+      _Promise& promise() const;
+    };
+
+  /// [coroutine.noop]
+  struct noop_coroutine_promise {};
+
+  // 17.12.4.1 Class noop_coroutine_promise
+  /// [coroutine.promise.noop]
+  template <>
+  struct coroutine_handle<noop_coroutine_promise> {
+      // _GLIBCXX_RESOLVE_LIB_DEFECTS
+      // 3460. Unimplementable noop_coroutine_handle guarantees
+      // [coroutine.handle.noop.conv], conversion
+      constexpr operator coroutine_handle<>() const noexcept;
+      // [coroutine.handle.noop.observers], observers
+      constexpr explicit operator bool() const noexcept { return true; }
+
+      constexpr bool done() const noexcept { return false; }
+
+      // [coroutine.handle.noop.resumption], resumption
+      void operator()() const noexcept {}
+
+      void resume() const noexcept {}
+
+      void destroy() const noexcept {}
+
+      // [coroutine.handle.noop.promise], promise access
+      noop_coroutine_promise& promise() const noexcept;
+
+      // [coroutine.handle.noop.address], address
+      constexpr void* address() const noexcept;
+
+    private:
+      friend coroutine_handle noop_coroutine() noexcept;
+      explicit coroutine_handle() noexcept = default;
+  }
+```
+
+对于std::coroutine_handle<void>而言，其关键的接口为
+
+- address() 产生一个coroutine内部data的地址
+
+- from_address() 根据promise type的地址生成相应的std::coroutine_handle
+
+- operator bool() 查询一个coroutine handle所共享的coroutine frame为空
+
+- done() 用来查询一个coroutine在final_suspend点是否是暂停的(suspend)
+
+- resume() 以及 operator()() 恢复coroutine的执行
+
+- destory() 销毁coroutine frame
+
+对于std::oroutine_handle<PromiseType>而言，其与std::coroutine_handle<void>相比较而言多了如下接口
+
+- from_promise() 根据传入的PromiseType对象 构建std::coroutine_handle
+
+- operator coroutine_handle<>() 将std::coroutine_handle转换为std::coroutine_handle<void>
+
+- promise() 返回std::coroutine_handle所相关的PromiseType实例
+
+## coroutine接口
+
+所谓coroutine接口，也即是coroutine返回给coroutine调用者的实例，用来与coroutine调用者进行通信的媒介。
+
+若要通过coroutine接口来定制coroutine的行为，需要在coroutine接口中实现promise_type以及定义std::coroutine_handle成员。
+
+# 简单实践
+
+若想将coroutine中的一些信息返回给coroutine调用者，可以初步使用co_yield和co_return这两个关键字。
+
+首先给出一个示例，co_yield val，并在coroutine调用者，获取该val值的代码
+
+```c++
+#include <iostream>
+#include <coroutine>
+#include <string>
+
+class CoroTask {
+public:
+  struct promise_type;
+  using CoroHd = std::coroutine_handle<promise_type>;
+
+  CoroTask(auto hd) : hd_{hd} {}
+  ~CoroTask() {
+    if (hd_) { hd_.destroy(); }
+  }
+
+  CoroTask(const CoroTask&) = delete;
+  CoroTask& operator=(const CoroTask&) = delete;
+
+  int getVlaue() const { return hd_.promise().CoroValue; }
+
+  bool resume() {
+    if (hd_ && !hd_.done()) {
+        hd_.resume();
+        return true;
+    }
+    return false;
+  }
+
+public:
+  struct promise_type {
+    int CoroValue{};
+    /* data */
+    auto get_return_object() {
+        return CoroTask{CoroHd::from_promise(*this)};
+    }
+    auto initial_suspend() { return std::suspend_always{};}
+    void unhandled_exception() { std::terminate();}
+    auto yield_value(int val) {
+      CoroValue = val;
+      return std::suspend_always{};
+    }
+    void return_void() {}
+    auto final_suspend() noexcept { return std::suspend_always{}; } 
+  };
+
+private:
+  CoroHd hd_;
+};
+
+#include "coro_task.h"
+
+CoroTask coro(int max) {
+    std::cout << "coro start, max: " << max << "\n";
+
+    for (int i = 0; i <= max; ++i) {
+        std::cout << "coro index: " << i << "\n";
+        co_yield i;
+    }
+    std::cout << "coro end\n";
+}
+
+int main() {
+    auto task = coro(4);
+    while (task.resume()) {
+        std::cout << "main get coroutine value: " << task.getVlaue() << "\n";
+    }
+
+    return 0;
+}
+```
+
+该示例代码的输出结果如下所示
+
+```c++
+coro start, max: 4
+coro index: 0
+main get coroutine value: 0
+coro index: 1
+main get coroutine value: 1
+coro index: 2
+main get coroutine value: 2
+coro index: 3
+main get coroutine value: 3
+coro index: 4
+main get coroutine value: 4
+coro end
+main get coroutine value: 4
+```
 
 
 
