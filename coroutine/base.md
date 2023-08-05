@@ -493,8 +493,170 @@ coro end
 main get coroutine value: 4
 ```
 
+若要使用co_yield将coroutine中的某些信息传递给coroutine调用者需要coder做如下工作
 
+- 在promise type类中声明并定义所需要的信息结构
 
+- 在promise type类中声明并定义yield_value接口，并将该接口的参数设置为相应的信息结构的类型
+
+- 在yield_value的实现中完成信息的写入
+
+- 在coroutine接口(coroutine返回值)中提供一个获取信息结构的接口，在该接口的实现中通过std::coroutine_handle的promise()接口获取coroutine相关的promise type并取回相应的值。
+
+为了在coroutine返回值 CoroTask上使用range for，可以对CoroTask中增加begin()和end()接口，用来遍历coroutine中co_yield所投递的消息。
+
+此外，为了提供begin()和end()接口，需要在CoroTask中提供iterator类，该类一般需要
+
+- 重载*操作符，也即operator*()
+
+- 重载++操作符，也即operator++()
+
+- 重载==操作符，也即operator==()
+
+因此一个最简单的iterator实现为
+
+```c++
+struct iterator {
+    CoroHd hd_{};
+    iterator(auto hd) : hd_(hd) {}
+
+    void getNext() {
+      if (!hd_ || hd_.done()) { return; }
+      hd_.resume();
+      if (hd_.done()) { hd_ = nullptr; }
+    }
+
+    int operator*() const {
+      return hd_.promise().CoroValue;
+    }
+
+    iterator operator++() {
+      getNext();
+      return *this;
+    }
+
+    bool operator==(const iterator&) const = default;
+  };
+```
+
+将其整合到CoroTask中，最终的CoroTask接口实现如下
+```c++
+#include <iostream>
+#include <coroutine>
+#include <string>
+
+class CoroTask {
+public:
+  struct promise_type;
+  using CoroHd = std::coroutine_handle<promise_type>;
+
+  CoroTask(auto hd) : hd_{hd} {}
+  ~CoroTask() {
+    if (hd_) { hd_.destroy(); }
+  }
+
+  CoroTask(const CoroTask&) = delete;
+  CoroTask& operator=(const CoroTask&) = delete;
+
+  int getVlaue() { return hd_.promise().CoroValue; }
+
+  bool resume() {
+    if (hd_ && !hd_.done()) {
+        hd_.resume();
+        return true;
+    }
+    return false;
+  }
+
+public:
+  struct promise_type {
+    int CoroValue{};
+    /* data */
+    auto get_return_object() {
+        return CoroTask{CoroHd::from_promise(*this)};
+    }
+    auto initial_suspend() { return std::suspend_always{};}
+    void unhandled_exception() { std::terminate();}
+    auto yield_value(int val) {
+      CoroValue = val;
+      return std::suspend_always{};
+    }
+    void return_void() {}
+    auto final_suspend() noexcept { return std::suspend_always{}; } 
+  };
+
+private:
+  struct iterator {
+    CoroHd hd_{};
+    iterator(auto hd) : hd_(hd) {}
+
+    void getNext() {
+      if (!hd_ || hd_.done()) { return; }
+      hd_.resume();
+      if (hd_.done()) { hd_ = nullptr; }
+    }
+
+    int operator*() const {
+      return hd_.promise().CoroValue;
+    }
+
+    iterator operator++() {
+      getNext();
+      return *this;
+    }
+
+    bool operator==(const iterator&) const = default;
+  };
+
+public:
+  iterator begin() const {
+    if (!hd_ || hd_.done()) {
+      return iterator{nullptr};
+    }
+    iterator it{hd_};
+    it.getNext();
+    return it;
+  }
+
+  iterator end() const {
+    return iterator{nullptr};
+  }
+
+private:
+  CoroHd hd_;
+
+};
+```
+
+此时更改main函数中的语句，将其整体修正如下
+
+```c++
+int main() {
+    auto task = coro(4);
+    for (const auto& val : task) {
+        std::cout << "main get coroutine value: " << val << "\n";
+    }
+
+    return 0;
+}
+```
+
+上述输出为
+
+```c++
+coro start, max: 4
+coro index: 0
+main get coroutine value: 0
+coro index: 1
+main get coroutine value: 1
+coro index: 2
+main get coroutine value: 2
+coro index: 3
+main get coroutine value: 3
+coro index: 4
+main get coroutine value: 4
+coro end
+```
 
 
 
