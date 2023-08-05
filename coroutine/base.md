@@ -658,5 +658,107 @@ main get coroutine value: 4
 coro end
 ```
 
+## 利用co_return返回信息给coroutine调用者
+
+再这里将coroutine中产生的vector<int>返回给coroutine调用者，并在coroutine调用者中输出相应的内容。
+
+co_return的使用可参考如下示例
+
+```c++
+template <typename T>
+class CoGen {
+public:
+  class promise_type {
+  public:
+    CoGen get_return_object() {
+      return CoGen{std::coroutine_handle<promise_type>::from_promise(*this)};
+    }
+    void return_value(const std::vector<T>& vec) {
+      vec_ = vec;
+    }
+    auto initial_suspend() { return std::suspend_always{};}
+    void unhandled_exception() { std::terminate();}
+    auto final_suspend() noexcept { return std::suspend_always{}; } 
+    const std::vector<T>& getResult() const { return vec_; }
+
+  private:
+    std::vector<T> vec_{};
+  };
+  CoGen(auto hd) : hd_{hd} {}
+  ~CoGen() {
+    if (hd_) {
+       hd_.destroy();
+    }
+  }
+
+  std::vector<T> getResult() const { return hd_.promise().getResult(); }
+  bool resume() {
+    if (!hd_ || hd_.done()) return false;
+    hd_.resume();
+    return true;
+  }
+
+private:
+  std::coroutine_handle<promise_type> hd_{};
+};
+
+CoGen<int> coroGen(int max) {
+    std::vector<int> vec;
+    vec.resize(abs(max));
+    std::iota(vec.begin(), vec.end(), 0);
+    co_return vec;
+}
+
+int main() {
+    auto task = coroGen(7);
+    while (task.resume());
+    std::cout << "coroutine end\n";
+    for (const auto& val : task.getResult()) {
+        std::cout << " " << val;
+    }
+    std::cout << "\n";
+    return 0;
+}
+```
+上述输出结果为
+
+```c++
+coroutine end
+ 0 1 2 3 4 5 6
+```
+
+利用co_return返回信息给coroutine调用者需要在promise type中进行如下工作
+
+- 声明并定义return_value(params)接口
+
+- 声明并定义相应的信息结构
+
+- 在return_value中完成信息的输入
+
+- 提供某些接口供coroutine接口使用
+
+# 总结
+
+基础部分讲解了C++20中coroutine的基本概念，stackless coroutine以及stackful coroutine。
+
+C++20 coroutine是编程不友好的，主要由于其组件多，依赖复杂，编译做的转换操作多。为了体验协程，本部分讲解了
+
+- co_await
+
+- co_yield
+
+- co_return
+
+这几个关键字的使用。
+
+同时也讲解了promise type类型的概念和作用； std::coroutine_handle的接口和作用。
+
+本部分较为基础。下一部分将深入coroutine。包括但不限于
+
+- co_await的具体工作原理
+
+- 为什么需要在coroutine接口中定义promise_type, 可否不在coroutine接口中定义promise_type
+
+- promise type是如何控制coroutine的行为
 
 
