@@ -178,4 +178,103 @@ co_await P.final_suspend();
 
 # Awaitable 和 awaiter
 
+Awaitable: 用于操作符co_await的操作数。更具体一些来说，Awaitable是一种规范/约束。co_await的操作数是满足Awaitable这种规范的对象(Awaitable对象)。该约束要求
+
+- coroutine是否需要暂停
+
+- 在coroutine暂停后能够执行一些逻辑操作
+
+- 在coroutine 恢复后可以执行一些逻辑操作
+
+awaiter: 是一个类型，该类实现了三种接口
+
+- await_ready
+
+- await_suspend
+
+- await_resume
+
+每当编译器看到 co_await expr语句时，编译器会做大量的转换工作。
+
+**对表达式求值**
+
+**获得awaitable对象**
+
+**转换co_await表达式**
+
+获得awaitable对象的步骤可归结为如下过程
+
+```c++
+template <typename PromiseType, typename T>
+decltype(auto) getAwaitable(PromiseType& p, T&& expr) {
+    if constexpr (has_any_await_transform_member_v<PromiseType>) {
+        return p.await_transform(static_cast<T&&>(expr));
+    }
+    return static_cast<T&&>(expr);
+}
+
+template <typename Awaitable>
+decltype(auto) getAwaiter(Awaitable&& a) {
+    if constexpr (has_member_operator_co_await_v<Awaitable>) {
+        return static_cast<Awaitable&&>(a).operator co_await();
+    }
+
+    if constexpr(has_non_member_operator_co_await_v<Awaitable>) {
+        return operator co_await(static_cast<Awaitable&&>(a));
+    }
+
+    return static_cast<Awaitable&&>(a);
+}
+```
+
+上述需要做如下说明：
+
+- awaitable对象由expr所产生的值和coroutine的promise_type对象确定
+
+- 若coroutine的promise_type定义的await_transform成员函数，那么此时awaitable对象便是该函数的求值结果
+
+- 若coroutine的promise_type未定义await_transform成员函数，那么直接将表达式的值转换为awaitable对象
+
+- 随后，为了获得真正的co_await的参数（awaiter）,  会继续判断awaitable对象中是否重载了co_await操作符，若定义了相应的co_await操作符，那么调用该重载函数生成相应的awaiter
+
+- 若awaitable对象中未重载co_await操作符，那么判断是否有非成员的co_await操作符，若存在，则调用该操作符生成相应的awaiter对象
+
+- 若都不存在，那么直接将awaitable对象强制转换为awaiter对象
+
+当编译器生成了awaiter对象后，会在coroutine体中生成如下伪代码
+
+```c++
+if (!awaiter.await_ready()) {
+    using handle_t = std::coroutine_handle<PromiseType>;
+    using await_suspend_result_t = decltype(awaiter.await_suspend(handle_t::from_promise(p)));
+
+    // suspend point
+
+    if constexpr (std::is_void_t<await_suspend_result_t>) {
+        awaiter.await_suspend(PromiseType);
+        // return to caller / resume coroutine
+    } else {
+        if (awaiter.await_suspend(PromiseType)) {
+            // return to caller / resume coroutine
+        }
+    }
+    // resume point
+}
+return awaiter.await_resume();
+```
+
+每个awaiter对象必须实现如下三个接口
+
+- await_ready()
+
+这个函数在coroutine被suspend之前调用。该接口决定coroutine是否被suspend，若该接口返回true, 则coroutine不会被suspend。
+
+- await_suspend(awaitHdl)
+
+这个函数在coroutine被suspend之后调用。awaitHdl是正在被suspend的coroutine的coroutine_handle。在这个接口中，你可以决定进行一些操作，譬如你可以resume正在suspend的其他coroutine等
+
+-  await_resume()
+
+这个函数在coroutine被resume之后调用。该函数所产生的值便是co_await表达式所产生的值。
+
 
